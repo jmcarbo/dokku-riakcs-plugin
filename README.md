@@ -7,6 +7,6 @@ Dokku riak-cs plugin
 
 ```
 sudo git clone https://github.com/jmcarbo/dokku-riakcs-plugin /var/lib/dokku/plugins/riakcs
-sudo dokku install-plugins
+sudo dokku plugins-install
 ```
 
