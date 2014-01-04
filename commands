@@ -1,10 +1,8 @@
 #!/bin/bash
-#set -e;
+#set -eo pipefail; [[ $DOKKU_TRACE ]] && set -x
+set -e
 
 APP=$2
-
-OLDHOME=$HOME
-HOME="$DOKKU_ROOT/.riakcs"
 
 check_exists() {
   if [[ ! -d "$DOKKU_ROOT/$APP" ]]; then
@@ -102,12 +100,13 @@ case "$1" in
     if [[ "$id" != "" ]]; then
       echo "RiakCS container already running with ID: ${id}"
     else
-      docker run -p 8080:8080 -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak -d "$db_image"
+      docker run -p 8080:8080 -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak -name="jmca-riakcs" -d "$db_image"
     fi
     ;;
   riakcs:stop)
     check_container
     docker stop ${id}
+    docker rm jmca-riakcs
     ;;
   riakcs:status)
     if [[ "$id" != "" ]]; then
@@ -129,6 +128,3 @@ EOF
     ;;
 esac
 
-HOME=$OLDHOME
-
-cat

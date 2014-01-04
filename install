@@ -20,8 +20,8 @@ if [[ ! -d "$DOKKU_ROOT/.riakcs/data" ]]; then
   mkdir -p "$DOKKU_ROOT/.riakcs/data"
 
   #Get s3 admin user from container
-  docker run -name="jmca" -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak "$db_image" /bin/bash /initialize.sh
-  docker rm jmca
+  docker run -name="jmca-riakcs" -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak "$db_image" /bin/bash /initialize.sh
+  docker rm jmca-riakcs
   cp "$DOKKU_ROOT/.riakcs/data/admin_user.json" "$DOKKU_ROOT/.riakcs/admin_user.json"
   chown -R dokku: "$DOKKU_ROOT/.riakcs/admin_user.json"
 
