@@ -1,0 +1,134 @@
+#!/bin/bash
+#set -e;
+
+APP=$2
+
+OLDHOME=$HOME
+HOME="$DOKKU_ROOT/.riakcs"
+
+check_exists() {
+  if [[ ! -d "$DOKKU_ROOT/$APP" ]]; then
+    echo "App must exist before creating riakcs storage for it"
+    exit 1
+  fi
+}
+
+check_app() {
+  if [[ -z "$APP" ]]; then
+    echo "You must specify an app name"
+    exit 1
+  fi
+}
+
+check_container() {
+  if [[ -z "$id" ]]; then
+    echo "RiakCS container not started cannot continue. Start with dokku riakcs:start"
+    exit 1
+  fi
+}
+
+db_image="jmca/riakcs"
+id=$(docker ps | grep "$db_image":latest |  awk '{print $1}')
+if [[ -n "$id" ]]; then
+  riak_public_ip=$(docker port ${id} 8080 | awk '{split($0,a,":"); print a[1]}')
+  riak_private_ip=$(docker inspect ${id} | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
+  riak_port=$(docker port ${id} 8080 | awk '{split($0,a,":"); print a[2]}')
+  if [[ $riak_public_ip = "0.0.0.0" ]]; then
+    riak_public_ip=localhost
+  fi
+fi
+bucket_name="${APP}-default"
+
+case "$1" in
+  riakcs:create)
+    check_container
+    check_app
+    check_exists
+
+    perl "$DOKKU_ROOT/.riakcs/s3-curl/s3curl.pl" --id admin --contentType application/json --post -- -s -x ${riak_public_ip}:${riak_port} --data "{\"email\":\"${APP}@${HOSTNAME}\", \"name\":\"${APP}\"}" http://riak-cs.s3.amazonaws.com/user > "$DOKKU_ROOT/.riakcs/user_${APP}.json"
+
+    user_key=$(cat "$DOKKU_ROOT/.riakcs/user_${APP}.json" | python -c "import json;import sys;print json.loads(sys.stdin.readline())['key_id']")
+    user_secret=$(cat "$DOKKU_ROOT/.riakcs/user_${APP}.json" | python -c "import json;import sys;print json.loads(sys.stdin.readline())['key_secret']")
+
+    s3curl="${APP} => { id => '${user_key}', key => '${user_secret}',},"
+
+    ex -sc "%s/^);\$/${s3curl}\r);/g" -c "x" "$DOKKU_ROOT/.riakcs/.s3curl"
+    chmod 600 "$DOKKU_ROOT/.riakcs/.s3curl"
+    chown root: "$DOKKU_ROOT/.riakcs/.s3curl"
+
+    perl "$DOKKU_ROOT/.riakcs/s3-curl/s3curl.pl" --id "$APP" -- -s -v -x "$riak_public_ip":"$riak_port" -X PUT "http://${bucket_name}.s3.amazonaws.com/"
+
+    riak_port=8080
+    dokku config:set "$APP" S3_PROXY_HOST="$riak_private_ip" \
+      S3_PROXY_PORT="$riak_port" \
+      AWS_ACCESS_KEY_ID="$user_key" \
+      S3_KEY="$user_key" \
+      AWS_SECRET_ACCESS_KEY="$user_secret" \
+      S3_Secret="$user_secret" \
+      S3_BUCKET_NAME="$bucket_name" \
+      S3_BUCKET="$bucket_name" \
+      S3_ASSET_HOST="http://assets.${APP}.${HOSTNAME}" \
+      S3_ENDPOINT='http://s3.amazonaws.com'
+    ;;
+  riakcs:delete)
+    check_container
+    check_app
+    check_exists
+
+    user_key=$(cat "$DOKKU_ROOT/.riakcs/user_${APP}.json" | python -c "import json;import sys;print json.loads(sys.stdin.readline())['key_id']")
+    perl "$DOKKU_ROOT/.riakcs/s3-curl/s3curl.pl" --id admin --delete -- -s -x ${riak_public_ip}:${riak_port} http://riak-cs.s3.amazonaws.com/user/${user_key}
+
+    ex -sc "g/${APP} =>/d" -c "x" "$DOKKU_ROOT/.riakcs/.s3curl"
+
+    rm "$DOKKU_ROOT/.riakcs/user_${APP}.json"
+
+    dokku config:unset "$APP" AWS_ACCESS_KEY_ID \
+      AWS_SECRET_ACCESS_KEY \
+      S3_PROXY_PORT \
+      S3_PROXY_HOST \
+      S3_BUCKET_NAME \
+      S3_ASSET_HOST \
+      S3_ENDPOINT
+    ;;
+  riakcs:list_users)
+    check_container
+    perl "$DOKKU_ROOT/.riakcs/s3-curl/s3curl.pl" --id admin -- -s -x ${riak_public_ip}:${riak_port} -H "Accept: application/json" http://s3.amazonaws.com/riak-cs/users
+    ;;
+  riakcs:list_buckets)
+    check_container
+    perl "$DOKKU_ROOT/.riakcs/s3-curl/s3curl.pl" --id admin -- -s -x ${riak_public_ip}:${riak_port} http://s3.amazonaws.com/
+    ;;
+  riakcs:start)
+    if [[ "$id" != "" ]]; then
+      echo "RiakCS container already running with ID: ${id}"
+    else
+      docker run -p 8080:8080 -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak -d "$db_image"
+    fi
+    ;;
+  riakcs:stop)
+    check_container
+    docker stop ${id}
+    ;;
+  riakcs:status)
+    if [[ "$id" != "" ]]; then
+      echo "RiakCS container running with ID: ${id}"
+    else
+      echo "RiakCS container not running"
+    fi
+    ;;
+  help)
+    cat && cat<<EOF
+    riakcs:create <app> Create a RiakCS database
+    riakcs:delete <app> Delete specified RiakCS database
+    riakcs:start        Start the RiakCS docker container if it isn't running
+    riakcs:stop         Stop the RiakCS docker container
+    riakcs:status       Shows status of RiakCS
+    riakcs:list_users   List all RiakCS users
+    riakcs:list_buckets List all RiakCS buckets
+EOF
+    ;;
+esac
+
+HOME=$OLDHOME
+
+cat

@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Build RiakCS image
+db_image="jmca/riakcs"
+
+apt-get -y install unzip libdigest-hmac-perl
+docker build -q=true -t "$db_image" github.com/jmcarbo/docker-riakcs
+
+if [[ ! -d "$DOKKU_ROOT/.riakcs" ]]; then
+  mkdir -p "$DOKKU_ROOT/.riakcs"
+
+  #Install s3-curl
+  cd "$DOKKU_ROOT/.riakcs"
+  wget http://s3.amazonaws.com/doc/s3-example-code/s3-curl.zip
+  unzip s3-curl.zip
+  rm s3-curl.zip
+fi
+
+if [[ ! -d "$DOKKU_ROOT/.riakcs/data" ]]; then
+  mkdir -p "$DOKKU_ROOT/.riakcs/data"
+
+  #Get s3 admin user from container
+  docker run -name="jmca" -v "$DOKKU_ROOT/.riakcs/data":/var/lib/riak "$db_image" /bin/bash /initialize.sh
+  docker rm jmca
+  cp "$DOKKU_ROOT/.riakcs/data/admin_user.json" "$DOKKU_ROOT/.riakcs/admin_user.json"
+  chown -R dokku: "$DOKKU_ROOT/.riakcs/admin_user.json"
+
+  ADMIN_KEY=$(cat "$DOKKU_ROOT/.riakcs/admin_user.json" | python -c "import json;import sys;print json.loads(sys.stdin.readline())['key_id']")
+  ADMIN_SECRET=$(cat "$DOKKU_ROOT/.riakcs/admin_user.json" | python -c "import json;import sys;print json.loads(sys.stdin.readline())['key_secret']")
+
+  cat <<EOF > "$DOKKU_ROOT/.riakcs/.s3curl"
+%awsSecretAccessKeys = (
+    admin => {
+        id => '${ADMIN_KEY}',
+        key => '${ADMIN_SECRET}',
+    },
+);
+EOF
+
+  chmod 600 "$DOKKU_ROOT/.riakcs/.s3curl"
+  chown root: "$DOKKU_ROOT/.riakcs/.s3curl"
+
+  echo "include $DOKKU_ROOT/*/nginx-assets.conf;" >> /etc/nginx/conf.d/dokku.conf
+fi
+
