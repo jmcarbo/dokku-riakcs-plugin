@@ -40,6 +40,6 @@ EOF
   chmod 600 "$DOKKU_ROOT/.riakcs/.s3curl"
   chown root: "$DOKKU_ROOT/.riakcs/.s3curl"
 
-  echo "include $DOKKU_ROOT/*/nginx-assets.conf;" >> /etc/nginx/conf.d/dokku.conf
+  grep -q -e  "include $DOKKU_ROOT/\*/nginx-assets.conf;" /etc/nginx/conf.d/dokku.conf || echo "include $DOKKU_ROOT/*/nginx-assets.conf;" >> /etc/nginx/conf.d/dokku.conf
 fi
 
